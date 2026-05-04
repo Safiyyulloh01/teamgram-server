@@ -97,8 +97,8 @@ services:
       - --max_connections=20
       - --thread_cache_size=8
       - --key_buffer_size=8M
-      - --query_cache_type=0
       - --innodb_flush_log_at_trx_commit=2
+      - --skip-log-bin
     restart: always
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p\"$$MYSQL_ROOT_PASSWORD\" || exit 1"]
