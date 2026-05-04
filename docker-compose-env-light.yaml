@@ -1,0 +1,159 @@
+# Lightweight env for 1GB RAM VPS — no ES, Jaeger, Prometheus, Grafana
+services:
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: kafka
+    mem_limit: 256m
+    memswap_limit: 512m
+    ports:
+      - 9092:9092
+      - 9094:9094
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CREATE_TOPICS: "Inbox-T:1:0,Sync-T:1:0,teamgram-log:1:0"
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9094,CONTROLLER://localhost:9093,PLAINTEXT_CONTAINER://kafka:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9094,PLAINTEXT_CONTAINER://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_CONTAINER:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_HEAP_OPTS: "-Xmx128m -Xms64m"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - teamgram_net
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.11
+    container_name: etcd
+    mem_limit: 128m
+    memswap_limit: 256m
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    environment:
+      ETCD_NAME: node1
+      ETCD_DATA_DIR: /etcd-data
+      ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd:2379
+      ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd:2380
+      ETCD_INITIAL_CLUSTER: node1=http://etcd:2380
+      ETCD_INITIAL_CLUSTER_TOKEN: teamgram-etcd
+      ETCD_INITIAL_CLUSTER_STATE: new
+      ETCD_AUTO_COMPACTION_RETENTION: 1
+    volumes:
+      - ./data/etcd:/etcd-data
+    restart: always
+    networks:
+      - teamgram_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    mem_limit: 64m
+    memswap_limit: 128m
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --save "" --maxmemory 48mb --maxmemory-policy allkeys-lru
+    volumes:
+      - ./data/redis:/data
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    networks:
+      - teamgram_net
+
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    mem_limit: 256m
+    memswap_limit: 512m
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-teamgram}
+      MYSQL_USER: ${MYSQL_USER:-teamgram}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-teamgram}
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+      - ./teamgramd/deploy/sql:/docker-entrypoint-initdb.d/
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+      - --innodb_buffer_pool_size=96M
+      - --innodb_log_buffer_size=4M
+      - --max_connections=20
+      - --thread_cache_size=8
+      - --key_buffer_size=8M
+      - --query_cache_type=0
+      - --innodb_flush_log_at_trx_commit=2
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p\"$$MYSQL_ROOT_PASSWORD\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - teamgram_net
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    mem_limit: 128m
+    memswap_limit: 256m
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-miniostorage}
+    command: server /data --console-address ":9001"
+    volumes:
+      - ./data/minio:/data
+    restart: always
+    networks:
+      - teamgram_net
+
+  minio-mc:
+    image: minio/mc:latest
+    container_name: minio-mc
+    mem_limit: 32m
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sleep 10
+        mc alias set myminio http://minio:9000 $${MINIO_ROOT_USER:-minio} $${MINIO_ROOT_PASSWORD:-miniostorage}
+        mc mb myminio/documents --ignore-existing
+        mc mb myminio/encryptedfiles --ignore-existing
+        mc mb myminio/photos --ignore-existing
+        mc mb myminio/videos --ignore-existing
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-miniostorage}
+    depends_on:
+      - minio
+    networks:
+      - teamgram_net
+
+volumes:
+  kafka_data:
+
+networks:
+  teamgram_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
