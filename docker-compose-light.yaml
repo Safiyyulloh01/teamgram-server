@@ -1,6 +1,6 @@
 services:
   teamgram:
-    build: .
+    image: ghcr.io/safiyyulloh01/teamgram-server:latest
     restart: always
     mem_limit: 384m
     memswap_limit: 512m

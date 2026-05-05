@@ -85,9 +85,10 @@ done
 [ -f teamgramd/deploy/sql/migrate_channels.sql ] && sudo docker exec -i mysql mysql -uroot -proot teamgram < teamgramd/deploy/sql/migrate_channels.sql 2>/dev/null || true
 echo "  SQL migrations done."
 
-# ---- 8. Build Teamgram (RAM-limited) ----
-echo "[8/8] Building Teamgram (5-15 mins on 1GB)..."
-sudo DOCKER_BUILDKIT=1 docker build --memory=512m -t teamgram-server .
+# ---- 8. Pull Teamgram image from GHCR ----
+echo "[8/8] Pulling Teamgram image from GHCR..."
+sudo docker pull ghcr.io/safiyyulloh01/teamgram-server:latest
+sudo docker tag ghcr.io/safiyyulloh01/teamgram-server:latest teamgram-server
 echo "  Starting Teamgram..."
 sudo docker compose -f docker-compose-light.yaml up -d
 sleep 5
